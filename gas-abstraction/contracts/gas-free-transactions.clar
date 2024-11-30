@@ -13,6 +13,7 @@
 (define-constant ERROR-INVALID-RELAY-ADDRESS (err u101))
 (define-constant ERROR-INSUFFICIENT-USER-BALANCE (err u102))
 (define-constant ERROR-INVALID-TRANSACTION-SIGNATURE (err u103))
+(define-constant ERROR-INVALID-ADDRESS (err u104))
 
 ;; Data variables
 (define-data-var contract-administrator principal tx-sender)
@@ -42,10 +43,16 @@
     (is-eq tx-sender (var-get contract-administrator))
 )
 
+;; Address validation helper - remove is-null check
+(define-private (is-valid-address (address principal))
+    (not (is-eq address (as-contract tx-sender)))  ;; Only prevent setting contract as admin
+)
+
 ;; Administrator management functions
 (define-public (transfer-contract-ownership (new-administrator-address principal))
     (begin
         (asserts! (is-contract-administrator) ERROR-UNAUTHORIZED)
+        (asserts! (is-valid-address new-administrator-address) ERROR-INVALID-ADDRESS)
         (ok (var-set contract-administrator new-administrator-address))
     )
 )
@@ -54,6 +61,7 @@
 (define-public (add-authorized-relay (relay-address principal))
     (begin
         (asserts! (is-contract-administrator) ERROR-UNAUTHORIZED)
+        (asserts! (is-valid-address relay-address) ERROR-INVALID-ADDRESS)
         (ok (map-set authorized-relay-addresses relay-address true))
     )
 )
@@ -61,6 +69,7 @@
 (define-public (remove-authorized-relay (relay-address principal))
     (begin
         (asserts! (is-contract-administrator) ERROR-UNAUTHORIZED)
+        (asserts! (is-valid-address relay-address) ERROR-INVALID-ADDRESS)
         (ok (map-set authorized-relay-addresses relay-address false))
     )
 )
