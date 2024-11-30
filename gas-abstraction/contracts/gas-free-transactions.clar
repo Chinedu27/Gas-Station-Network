@@ -1,6 +1,14 @@
 ;; Gas Station Network Contract
 ;; Allows users to send transactions without holding STX for gas fees
 
+;; Define trait for contracts that can be called through this GSN
+(define-trait target-contract-trait
+    (
+        ;; Generic function call trait - accepts a list of string arguments
+        (execute-function ((string-ascii 128)) (response bool uint))
+    )
+)
+
 (define-constant ERROR-UNAUTHORIZED (err u100))
 (define-constant ERROR-INVALID-RELAY-ADDRESS (err u101))
 (define-constant ERROR-INSUFFICIENT-USER-BALANCE (err u102))
@@ -81,31 +89,47 @@
     )
 )
 
-;; Relay transaction handling
-(define-public (process-relayed-transaction
+;; Helper function to create transaction hash
+(define-private (generate-transaction-hash 
     (user-address principal)
     (destination-contract principal)
     (target-function-name (string-ascii 128))
-    (function-arguments (list 10 (string-ascii 128)))
+    (current-nonce uint))
+    (sha256 (concat 
+        (concat 
+            (concat
+                (unwrap-panic (to-consensus-buff? user-address))
+                (unwrap-panic (to-consensus-buff? destination-contract)))
+            (unwrap-panic (to-consensus-buff? target-function-name)))
+        (unwrap-panic (to-consensus-buff? current-nonce))))
+)
+
+;; Relay transaction handling
+(define-public (process-relayed-transaction
+    (user-address principal)
+    (destination-contract <target-contract-trait>)
+    (target-function-name (string-ascii 128))
+    (function-arguments (string-ascii 128))
     (transaction-gas-price uint)
     (transaction-gas-limit uint)
     (transaction-signature (buff 65))
+    (public-key (buff 33))
 )
     (let (
         (current-nonce (get-user-transaction-nonce user-address))
         (relay-address tx-sender)
-        (transaction-hash (hash160 (concat (concat (concat 
-            (principal-to-buff user-address)
-            (principal-to-buff destination-contract))
-            (string-to-buff target-function-name))
-            (uint-to-buff current-nonce))))
+        (transaction-hash (generate-transaction-hash 
+            user-address 
+            (contract-of destination-contract)
+            target-function-name 
+            current-nonce))
     )
         (begin
             ;; Verify relay is authorized
             (asserts! (is-relay-address-authorized relay-address) ERROR-INVALID-RELAY-ADDRESS)
             
-            ;; Verify signature
-            (asserts! (is-eq (verify-signature transaction-hash transaction-signature user-address) true) 
+            ;; Verify signature using secp256k1-verify
+            (asserts! (is-eq (secp256k1-verify transaction-hash transaction-signature public-key) true)
                 ERROR-INVALID-TRANSACTION-SIGNATURE)
             
             ;; Verify user has enough balance
@@ -116,7 +140,7 @@
             (map-set user-transaction-nonces user-address (+ current-nonce u1))
             
             ;; Execute the transaction
-            (contract-call? destination-contract target-function-name function-arguments)
+            (try! (contract-call? destination-contract execute-function function-arguments))
             
             ;; Deduct gas fees
             (map-set user-account-balances user-address 
